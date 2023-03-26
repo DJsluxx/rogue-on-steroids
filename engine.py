@@ -1,30 +1,37 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+import lzma
+import pickle
 
-from tcod.context import Context
 from tcod.console import Console
 from tcod.map import compute_fov
 
-from input_handlers import MainGameEventHandler
+from message_log import MessageLog
+import exceptions
+import render_functions
 
 if TYPE_CHECKING:
     from entity import Actor
-    from game_map import GameMap
-    from input_handlers import EventHandler
+    from game_map import GameMap, GameWorld
 
 
 class Engine:
     game_map: GameMap
+    game_world: GameWorld
 
     def __init__(self, player: Actor):
-        self.event_handler: EventHandler = MainGameEventHandler(self)
+        self.message_log = MessageLog()
+        self.mouse_location = (0, 0)
         self.player = player
 
     def handle_enemy_turns(self) -> None:
         for entity in set(self.game_map.actors) - {self.player}:
             if entity.ai:
-                entity.ai.perform()
+                try:
+                    entity.ai.perform()
+                except exceptions.Impossible:
+                    pass  # Ignore impossible action exceptions from AI.
 
     def update_fov(self) -> None:
         """Recompute the visible area based on the players point of view."""
@@ -36,15 +43,28 @@ class Engine:
         # If a tile is "visible" it should be added to "explored".
         self.game_map.explored |= self.game_map.visible
 
-    def render(self, console: Console, context: Context) -> None:
+    def render(self, console: Console) -> None:
         self.game_map.render(console)
 
-        console.print(
-            x=1,
-            y=47,
-            string=f"HP: {self.player.fighter.hp}/{self.player.fighter.max_hp}",
+        self.message_log.render(console=console, x=21, y=45, width=40, height=5)
+
+        render_functions.render_bar(
+            console=console,
+            current_value=self.player.fighter.hp,
+            maximum_value=self.player.fighter.max_hp,
+            total_width=20,
         )
 
-        context.present(console)
+        render_functions.render_dungeon_level(
+            console=console,
+            dungeon_level=self.game_world.current_floor,
+            location=(0, 47),
+        )
 
-        console.clear()
+        render_functions.render_names_at_mouse_location(console=console, x=21, y=44, engine=self)
+
+    def save_as(self, filename: str) -> None:
+        """Save this Engine instance as a compressed file."""
+        save_data = lzma.compress(pickle.dumps(self))
+        with open(filename, "wb") as f:
+            f.write(save_data)
